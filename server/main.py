@@ -1,8 +1,10 @@
+import random
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
-from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders
+from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders, restocking_orders
 
 app = FastAPI(title="Factory Inventory Management System")
 
@@ -120,6 +122,26 @@ class CreatePurchaseOrderRequest(BaseModel):
     expected_delivery_date: str
     notes: Optional[str] = None
 
+class RestockLineItem(BaseModel):
+    sku: str
+    name: str
+    quantity: int
+    unit_cost: float
+
+class CreateRestockOrderRequest(BaseModel):
+    items: List[RestockLineItem]
+    total_budget: float
+
+class RestockOrder(BaseModel):
+    id: str
+    order_number: str
+    items: List[RestockLineItem]
+    total_value: float
+    status: str
+    order_date: str
+    lead_time_days: int
+    expected_delivery: str
+
 # API endpoints
 @app.get("/")
 def root():
@@ -178,6 +200,37 @@ def get_backlog():
         item_dict["has_purchase_order"] = has_po
         result.append(item_dict)
     return result
+
+@app.get("/api/restocking/orders", response_model=List[RestockOrder])
+def get_restock_orders():
+    """Get all submitted restocking orders"""
+    return restocking_orders
+
+@app.post("/api/restocking/orders", response_model=RestockOrder, status_code=201)
+def create_restock_order(request: CreateRestockOrderRequest):
+    """Submit a new restocking order built from client-computed budget recommendations"""
+    if not request.items:
+        raise HTTPException(status_code=400, detail="Order must contain at least one item")
+    if any(item.quantity <= 0 for item in request.items):
+        raise HTTPException(status_code=400, detail="Item quantities must be positive")
+
+    order_date = datetime.now()
+    # No lead_time field exists in the mock data, so generate a realistic random one per order
+    lead_time_days = random.randint(3, 14)
+    expected_delivery = order_date + timedelta(days=lead_time_days)
+
+    order = {
+        "id": f"RSO-{len(restocking_orders) + 1:05d}",
+        "order_number": f"RSO-2025-{len(restocking_orders) + 1:04d}",
+        "items": [item.model_dump() for item in request.items],
+        "total_value": round(sum(item.quantity * item.unit_cost for item in request.items), 2),
+        "status": "Processing",
+        "order_date": order_date.strftime("%Y-%m-%d"),
+        "lead_time_days": lead_time_days,
+        "expected_delivery": expected_delivery.strftime("%Y-%m-%d"),
+    }
+    restocking_orders.append(order)
+    return order
 
 @app.get("/api/dashboard/summary")
 def get_dashboard_summary(
